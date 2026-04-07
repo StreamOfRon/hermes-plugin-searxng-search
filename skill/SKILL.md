@@ -1,69 +1,92 @@
 ---
-name: example-skill
-description: An example skill demonstrating Hermes skill structure and frontmatter
+name: searxng-search
+description: Search the web using SearXNG and extract web page content natively
 author: Your Name
 version: 0.1.0
 tags:
-  - example
-  - template
-  - demonstration
-requires_tools: []
+  - search
+  - web
+  - searxng
+  - extraction
+requires_tools:
+  - searxng_search
+  - native_extract
 provides_commands:
-  - /example-skill
+  - /searxng-search
 ---
 
-# Example Skill
+# SearXNG Search Skill
 
 ## When to Use
 
-Use this skill when you need a reference for how Hermes skills are structured,
-or when you want to demonstrate the skill loading mechanism.
+Use this skill when the user asks to search the web and a SearXNG instance is
+configured (via the `SEARXNG_URL` environment variable). SearXNG is a
+privacy-respecting, self-hosted metasearch engine that aggregates results from
+multiple search engines without tracking.
 
-This skill serves as a template showing:
-- YAML frontmatter with all optional fields
-- Required sections and their purpose
-- Directory patterns for references and templates
+Also use the `native_extract` tool when you need to fetch and extract content
+from specific URLs without relying on third-party extraction APIs.
 
 ## Procedure
 
-1. **Understand the frontmatter** — The YAML block at the top defines metadata
-   that Hermes uses to register and display the skill.
+### Searching with SearXNG
 
-2. **Review the sections** — Skills should have clear sections:
-   - When to Use: Conditions that trigger this skill
-   - Procedure: Step-by-step instructions
-   - Pitfalls: Common mistakes to avoid
-   - Verification: How to confirm correct behavior
+1. Call `searxng_search` with a `query` string.
+2. Optionally set `limit` (1–20, default 5) to control result count.
+3. Parse the returned JSON. Results are in `data.web` as an array of:
+   - `title` — Page title
+   - `url` — Page URL
+   - `description` — Snippet/content summary
+   - `position` — 1-based ranking position
+4. If the tool returns `"success": false`, inform the user that SearXNG is not
+   configured and suggest setting `SEARXNG_URL`.
 
-3. **Reference external resources** — Use the `references/` directory pattern:
-   ```
-   skill/
-   ├── SKILL.md
-   └── references/
-       └── api-docs.md    # Supporting documentation
-   ```
+### Extracting Web Pages
 
-4. **Use templates** — Use the `templates/` directory pattern:
-   ```
-   skill/
-   ├── SKILL.md
-   └── templates/
-       └── output.md.j2   # Jinja2 template for output
-   ```
+1. Call `native_extract` with a `urls` array (max 5 URLs).
+2. Parse the returned JSON. Each entry contains:
+   - `url` — The requested URL
+   - `title` — Page title (may be empty)
+   - `content` — Extracted content as markdown
+   - `error` — `null` on success, error message on failure
+3. If `html-to-markdown` is not installed, a basic HTML tag stripping fallback
+   is used. Results may be less clean.
+
+## Configuration
+
+The plugin requires the `SEARXNG_URL` environment variable to be set. The URL
+should include a `%s` placeholder for the search query:
+
+```
+SEARXNG_URL=https://searx.example.com/search?q=%s
+```
+
+Optional authentication via Bearer token:
+
+```
+SEARXNG_API_KEY=your-api-key
+```
 
 ## Pitfalls
 
-- **Missing frontmatter**: Skills without `---` delimited YAML frontmatter
-  will not be discovered by Hermes.
-- **Missing required fields**: `name` and `description` are required in frontmatter.
-- **Field length limits**: Keep `name` under 50 characters, `description` under 200.
-- **Incorrect directory structure**: Skills must be in `~/.hermes/skills/<name>/SKILL.md`.
-- **Duplicate names**: Two skills with the same `name` will conflict.
+- **Missing SEARXNG_URL**: The `searxng_search` tool will return an error if
+  the environment variable is not set. Check `"success": false` in the response.
+- **URL template format**: The URL must contain `%s` as the query placeholder.
+  Without it, the query will not be substituted correctly.
+- **Rate limits**: SearXNG instances may have rate limits. Use reasonable
+  `limit` values.
+- **SSL errors**: The `native_extract` tool may fail with SSL errors on some
+  Python configurations. The error message will indicate this.
+- **HTML-to-markdown**: Without the `html-to-markdown` package, extracted
+  content uses a crude regex fallback. Install it for cleaner results.
+- **Max URLs**: `native_extract` silently caps at 5 URLs.
 
 ## Verification
 
-To verify this skill is loaded correctly:
+To verify the plugin is working:
 
-1. Copy the `skill/` directory to `~/.hermes/skills/example/`
-2. Run `hermes` and check that `/example-skill` appears in slash commands
-3. Trigger the skill and confirm it responds with the expected behavior
+1. Set `SEARXNG_URL` to a valid SearXNG instance URL with `%s` placeholder.
+2. Run Hermes and confirm `searxng_search` and `native_extract` appear in the
+   available tools list.
+3. Trigger a search query and confirm results are returned with title, URL,
+   and description fields.

@@ -1,0 +1,6 @@
+name: searxng_search
+version: 0.1.0
+description: SearXNG search tool for Hermes
+author: Your Name
+provides_tools:
+  - searxng_search

@@ -1,16 +1,14 @@
-"""Tests for plugin structure and tool handler contract.
-
-These tests validate the plugin's own code without depending on
-Hermes's internal PluginManager singleton or namespace package caching.
-"""
+"""Tests for the SearXNG plugin structure and tool handler contract."""
 
 import json
+import os
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
-PLUGIN_DIR = Path(__file__).parent.parent / "plugin"
+PLUGIN_DIR = Path(__file__).parent.parent
 
 
 class TestPluginYaml:
@@ -31,13 +29,13 @@ class TestPluginYaml:
         assert isinstance(data["provides_tools"], list)
         assert len(data["provides_tools"]) > 0
 
-    def test_tool_names_match_schema(self):
-        """Every tool in plugin.yaml should have a matching schema."""
+    def test_tool_names_match_schemas(self):
         manifest = yaml.safe_load((PLUGIN_DIR / "plugin.yaml").read_text())
-        from plugin.schemas import EXAMPLE_TOOL_SCHEMA
+        import schemas
 
+        schema_names = {schemas.SEARXNG_SEARCH_SCHEMA["name"]}
         for tool_name in manifest["provides_tools"]:
-            assert EXAMPLE_TOOL_SCHEMA["name"] == tool_name
+            assert tool_name in schema_names
 
 
 class TestPluginInit:
@@ -47,8 +45,7 @@ class TestPluginInit:
         assert (PLUGIN_DIR / "__init__.py").exists()
 
     def test_has_register_function(self):
-        """__init__.py must expose a register() callable."""
-        import plugin
+        import __init__ as plugin
 
         assert hasattr(plugin, "register")
         assert callable(plugin.register)
@@ -58,74 +55,182 @@ class TestToolSchemas:
     """Validate tool schema definitions."""
 
     def test_schema_has_name(self):
-        from plugin.schemas import EXAMPLE_TOOL_SCHEMA
+        import schemas
 
-        assert "name" in EXAMPLE_TOOL_SCHEMA
-        assert isinstance(EXAMPLE_TOOL_SCHEMA["name"], str)
+        assert schemas.SEARXNG_SEARCH_SCHEMA["name"] == "searxng_search"
 
     def test_schema_has_description(self):
-        from plugin.schemas import EXAMPLE_TOOL_SCHEMA
+        import schemas
 
-        assert "description" in EXAMPLE_TOOL_SCHEMA
+        assert "description" in schemas.SEARXNG_SEARCH_SCHEMA
 
     def test_schema_has_parameters(self):
-        from plugin.schemas import EXAMPLE_TOOL_SCHEMA
+        import schemas
 
-        assert "parameters" in EXAMPLE_TOOL_SCHEMA
-        assert "type" in EXAMPLE_TOOL_SCHEMA["parameters"]
-        assert "properties" in EXAMPLE_TOOL_SCHEMA["parameters"]
+        assert "parameters" in schemas.SEARXNG_SEARCH_SCHEMA
+        assert "query" in schemas.SEARXNG_SEARCH_SCHEMA["parameters"]["properties"]
+        assert "limit" in schemas.SEARXNG_SEARCH_SCHEMA["parameters"]["properties"]
 
-    def test_required_fields_are_strings(self):
-        from plugin.schemas import EXAMPLE_TOOL_SCHEMA
+    def test_required_fields(self):
+        import schemas
 
-        for field in EXAMPLE_TOOL_SCHEMA["parameters"].get("required", []):
-            assert field in EXAMPLE_TOOL_SCHEMA["parameters"]["properties"]
+        assert schemas.SEARXNG_SEARCH_SCHEMA["parameters"]["required"] == ["query"]
 
 
-class TestToolHandlers:
-    """Validate tool handler implementations follow the contract."""
+class TestSearXNGSearchHandler:
+    """Test searxng_search_handler functionality."""
 
-    def test_handler_returns_json_string(self):
-        from plugin.tools import example_tool_handler
+    def test_no_config_returns_error(self):
+        """Handler returns error JSON when SEARXNG_URL is not set."""
+        import tools
 
-        result = example_tool_handler({"message": "hello"})
-        assert isinstance(result, str)
-        data = json.loads(result)
-        assert isinstance(data, dict)
+        with patch.dict(os.environ, {}, clear=True):
+            result = tools.searxng_search_handler({"query": "test query"})
+            data = json.loads(result)
+            assert data["success"] is False
+            assert "no URL configured" in data["error"]
 
-    def test_handler_success_response(self):
-        from plugin.tools import example_tool_handler
+    def test_success_response(self):
+        """Test successful SearXNG search."""
+        import tools
 
-        result = example_tool_handler({"message": "hello world"})
-        data = json.loads(result)
-        assert data["status"] == "success"
-        assert data["message"] == "hello world"
-        assert data["length"] == 11
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "results": [
+                {
+                    "title": "Result 1",
+                    "url": "https://example.com/1",
+                    "content": "Content 1",
+                },
+                {
+                    "title": "Result 2",
+                    "url": "https://example.com/2",
+                    "content": "Content 2",
+                },
+            ]
+        }
+        mock_response.raise_for_status = MagicMock()
 
-    def test_handler_verbose_mode(self):
-        from plugin.tools import example_tool_handler
+        with patch.dict(
+            os.environ, {"SEARXNG_URL": "https://searx.example.com/search?q=%s"}
+        ):
+            with patch("httpx.Client") as mock_client:
+                mock_client.return_value.__enter__.return_value.get.return_value = (
+                    mock_response
+                )
 
-        result = example_tool_handler({"message": "test", "verbose": True})
-        data = json.loads(result)
-        assert data["status"] == "success"
-        assert "details" in data
+                result = tools.searxng_search_handler({"query": "test query", "limit": 2})
+                data = json.loads(result)
 
-    def test_handler_error_returns_json(self):
-        """Handler must never raise; errors must be returned as JSON."""
-        from plugin.tools import example_tool_handler
+                assert data["success"] is True
+                assert len(data["data"]["web"]) == 2
+                assert data["data"]["web"][0]["title"] == "Result 1"
+                assert data["data"]["web"][0]["position"] == 1
 
-        # Even with missing keys, handler should not raise
-        result = example_tool_handler({})
-        data = json.loads(result)
-        assert "status" in data
+    def test_limit_respected(self):
+        """Handler should respect the limit parameter."""
+        import tools
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "results": [
+                {"title": f"Result {i}", "url": f"https://example.com/{i}", "content": f"Content {i}"}
+                for i in range(10)
+            ]
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.dict(
+            os.environ, {"SEARXNG_URL": "https://searx.example.com/search?q=%s"}
+        ):
+            with patch("httpx.Client") as mock_client:
+                mock_client.return_value.__enter__.return_value.get.return_value = (
+                    mock_response
+                )
+
+                result = tools.searxng_search_handler({"query": "test", "limit": 3})
+                data = json.loads(result)
+                assert len(data["data"]["web"]) == 3
+
+    def test_api_key_header_added(self):
+        """Handler should add Authorization header when SEARXNG_API_KEY is set."""
+        import tools
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"results": []}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.dict(
+            os.environ,
+            {
+                "SEARXNG_URL": "https://searx.example.com/search?q=%s",
+                "SEARXNG_API_KEY": "test-key",
+            },
+        ):
+            with patch("httpx.Client") as mock_client:
+                mock_client.return_value.__enter__.return_value.get.return_value = (
+                    mock_response
+                )
+
+                tools.searxng_search_handler({"query": "test"})
+
+                call_args = mock_client.return_value.__enter__.return_value.get.call_args
+                headers = call_args.kwargs.get("headers", {})
+                assert headers["Authorization"] == "Bearer test-key"
+
+    def test_http_error_returns_error_json(self):
+        """Handler should return error JSON on HTTP failure."""
+        import tools
+
+        import httpx
+
+        with patch.dict(
+            os.environ, {"SEARXNG_URL": "https://searx.example.com/search?q=%s"}
+        ):
+            with patch("httpx.Client") as mock_client:
+                mock_client.return_value.__enter__.return_value.get.side_effect = (
+                    httpx.HTTPError("Connection refused")
+                )
+
+                result = tools.searxng_search_handler({"query": "test"})
+                data = json.loads(result)
+
+                assert data["success"] is False
+                assert "error" in data
 
     def test_handler_does_not_raise(self):
-        """Handler must catch all exceptions."""
-        from plugin.tools import example_tool_handler
+        """Handler must never raise; errors must be returned as JSON."""
+        import tools
 
         try:
-            result = example_tool_handler(None)
+            result = tools.searxng_search_handler(None)
             data = json.loads(result)
-            assert "status" in data
+            assert "success" in data or "error" in data
         except Exception:
             pytest.fail("Handler raised an exception instead of returning error JSON")
+
+
+class TestSkillFile:
+    """Validate the bundled skill file."""
+
+    def test_skill_exists(self):
+        assert (Path(__file__).parent.parent / "skill" / "SKILL.md").exists()
+
+    def test_skill_has_frontmatter(self):
+        import re
+
+        content = (Path(__file__).parent.parent / "skill" / "SKILL.md").read_text()
+        match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
+        assert match, "SKILL.md must have YAML frontmatter"
+
+    def test_skill_frontmatter_fields(self):
+        import re
+
+        content = (Path(__file__).parent.parent / "skill" / "SKILL.md").read_text()
+        match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
+        frontmatter = yaml.safe_load(match.group(1))
+
+        assert "name" in frontmatter
+        assert "description" in frontmatter
+        assert len(frontmatter["name"]) <= 50
+        assert len(frontmatter["description"]) <= 200

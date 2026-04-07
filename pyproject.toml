@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "example-hermes-plugin"
+name = "hermes-plugin-searxng-search"
 version = "0.1.0"
-description = "Example Hermes plugin — demonstrates tools, hooks, and bundled skill"
+description = "SearXNG search tool for Hermes"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
@@ -20,7 +20,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-dependencies = []
+dependencies = [
+    "httpx>=0.24",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -30,10 +32,7 @@ dev = [
 ]
 
 [project.entry-points."hermes_agent.plugins"]
-example_plugin = "plugin"
-
-[tool.setuptools.packages.find]
-include = ["plugin*"]
+searxng_search = "hermes_plugin_searxng_search"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

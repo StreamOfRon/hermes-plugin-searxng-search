@@ -82,7 +82,6 @@ class TestSkillStructure:
     def test_has_sections(self):
         """SKILL.md should have standard sections."""
         content = SKILL_PATH.read_text()
-        # Check for at least one standard section header
         sections = [
             "## When to Use",
             "## Procedure",
