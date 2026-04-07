@@ -4,8 +4,8 @@ import logging
 import shutil
 from pathlib import Path
 
-import schemas
-import tools
+from . import schemas
+from . import tools
 
 logger = logging.getLogger(__name__)
 
