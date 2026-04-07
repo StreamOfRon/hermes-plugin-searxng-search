@@ -31,8 +31,8 @@ dev = [
     "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git",
 ]
 
-[project.entry-points."hermes_agent.plugins"]
-searxng_search = "hermes_plugin_searxng_search"
+
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
