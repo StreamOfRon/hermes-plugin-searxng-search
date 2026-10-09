@@ -4,8 +4,15 @@ import logging
 import shutil
 from pathlib import Path
 
-from . import schemas
-from . import tools
+try:
+    # Loaded as a package by Hermes (hermes_plugins.<slug>).
+    from . import schemas
+    from . import tools
+except ImportError:
+    # Imported without a package context (pytest collects this directory as a
+    # Package and imports the entry point directly; tests load it top-level).
+    import schemas
+    import tools
 
 logger = logging.getLogger(__name__)
 
